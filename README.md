@@ -1,4 +1,4 @@
-# Calculating connectivity in Google Earth Engine
+# Quantifying connectivity for wildlife in Google Earth Engine
 
 **Question**
 
