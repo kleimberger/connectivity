@@ -1,4 +1,4 @@
-# Calculating connectivity in Google Earth Engine
+# Quantifying connectivity for wildlife
 
 **Question**
 
@@ -9,13 +9,14 @@ How can we quantify the connectivity of a given study site, from the perspective
 The connectivity metric developed here essentially quantifies the amount of accessible habitat, without having to explicitly define habitat patches while digitizing.
 
 This approach relies on two key data sources:
+
 1.	Geospatial data layer designating habitat vs. non-habitat for the focal species. I digitized forest and regenerating forest from high-resolution Google Earth satellite imagery.
 
 2.	Existing information about movement behavior for the focal species
     -	Gap-crossing ability. At what distance do gaps become large enough to reduce movement of that species? 
     -	Average daily movement distance, or a similar measure. Here, I used mean length of the home range.
 
-Processing steps
+Processing steps in Google Earth Engine
 
 1.	Use gap-crossing ability to connect habitat within a certain distance
 
