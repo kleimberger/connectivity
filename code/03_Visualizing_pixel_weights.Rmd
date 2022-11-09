@@ -1,0 +1,71 @@
+---
+title: "Visualizing pixel weights"
+output: html_document
+---
+
+**Goal**
+
+Make a figure of pixel weights within focal landscape (1000m of focal area centroid)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyr)
+library(purrr)
+library(ggplot2)
+
+#Spatial packages
+library(sf)
+library(sp)
+library(tmap)
+
+library(dplyr) #load last so that 'select' function does not get masked
+
+raster::removeTmpFiles(h=0) #this removes all files. If h = 24, removes all temp files more than 24 hours old, etc.
+```
+
+Import spatial data
+```{r}
+#Get weighted pixel areas for a couple of example sites
+
+weighted_pixel_areas_p10 <- raster::raster("data/export/for_analysis/Weighted_pixel_area_images_20200701/10.tif")
+
+weighted_pixel_areas_p30 <- raster::raster("data/export/for_analysis/Weighted_pixel_area_images_20200701/30.tif")
+
+#Match extent of closeup
+projstring <- "+proj=utm +zone=17 +ellps=WGS84 +units=m +no_defs" 
+weighted_pixel_areas_p30 <- raster::projectRaster(weighted_pixel_areas_p30, crs = projstring)
+```
+
+Get bounding box
+```{r}
+#Function to zoom out from bounding box by certain amount. 'layer' is sf or raster object
+zoom_out <- function(layer, adjust){
+  
+  bb = sf::st_bbox(layer)
+  
+  bb_adjust = sf::st_bbox(c(xmin = bb[[1]] - adjust, xmax = bb[[3]] + adjust, ymin = bb[[2]] - adjust, ymax = bb[[4]] + adjust), crs = proj)
+  
+  return(bb_adjust)
+  
+}
+```
+
+Plot pixel weights
+```{r}
+#tmaptools::palette_explorer() for the named palettes.
+pixel_weight_map <- 
+  
+  tm_shape(weighted_pixel_areas_p30, bbox = zoom_out(weighted_pixel_areas_p30, 250), unit = "m") +
+    tm_raster(style = "cont", palette = "-RdYlBu", title = "Pixel weight", breaks = c(0, 0.5, 1), legend.show = TRUE, legend.is.portrait = TRUE) +
+  
+  tm_scale_bar(position = c("left", "bottom"), text.size = 1.5, breaks = c(0, 500, 1000), bg.color = "white", bg.alpha = 0) + 
+  tm_layout(inner.margins = c(0,0,0,0), outer.margins = c(0,0,0,0), frame.lwd = 4,  legend.title.size = 2, legend.text.size = 1.5) +
+  tm_compass(type = "arrow", position = c(0.06, 0.12), just = c("center"), size = 2.5, show.labels = 1, text.size = 1.5) #show.labels value of 1 means only show north
+
+pixel_weight_map
+
+tmap_save(pixel_weight_map, filename = "results/Pixel_weight_map.png",
+          dpi = 300,
+          height = 8, width = 8, units = "in")
+```

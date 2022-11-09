@@ -24,6 +24,8 @@ Processing steps in Google Earth Engine
 
 3.	Assign weight to each habitat pixel, based on Hanski’s (1994) incidence function model, an exponential decay equation that can be arameterized with the species’ daily movement distance. While originally developed for use with discrete habitat *patches*, here I use the equation to downweights habitat *pixels* farther away from the study site.
 
+![Pixel weights for a sample site](results/Pixel_weight_map.png)
+
 4.	Finally, sum the weighted pixel values. This value functional connectivity, or the amount of accessible habitat for the focal species.
 
 **Results**
