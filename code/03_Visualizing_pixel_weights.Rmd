@@ -65,7 +65,7 @@ pixel_weight_map <-
 
 pixel_weight_map
 
-tmap_save(pixel_weight_map, filename = "results/Pixel_weight_map.png",
+tmap_save(pixel_weight_map, filename = "Pixel_weight_map.png",
           dpi = 300,
           height = 8, width = 8, units = "in")
 ```
