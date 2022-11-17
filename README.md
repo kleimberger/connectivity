@@ -2,11 +2,11 @@
 
 **Question**
 
-How can we quantify the connectivity of a given study site, from the perspective of an individual species? Here, I focus on functional connectivity, or how much a given location facilitates (or impedes) wildlife movement.
+How can we quantify the connectivity of a given study site, from the perspective of an individual species? Here, I focus on *functional connectivity*, i.e., how much a given location facilitates (or impedes) wildlife movement.
 
 **Approach**
 
-The connectivity metric developed here essentially quantifies the amount of accessible habitat, without having to explicitly define habitat patches while digitizing.
+The connectivity metric developed here essentially quantifies the amount of accessible habitat without having to explicitly define habitat patches while digitizing.
 
 This approach relies on two key data sources:
 
@@ -22,13 +22,13 @@ Processing steps in Google Earth Engine
 
 2.	For each habitat pixel, calculate the shortest distance (least cost distance) to the study site, staying within the boundaries of ‘habitat’.
 
-3.	Assign weight to each habitat pixel, based on Hanski’s (1994) incidence function model, an exponential decay equation that can be arameterized with the species’ daily movement distance. While originally developed for use with discrete habitat *patches*, here I use the equation to downweights habitat *pixels* farther away from the study site.
+3.	Assign weight to each habitat pixel, based on Hanski’s (1994) incidence function model, an exponential decay equation that can be parameterized with the species’ daily movement distance. While originally developed for use with discrete habitat *patches*, here I use the equation to down weights habitat *pixels* farther away from the study site.
 
 <p align="center">
   <img width="400" height="400" src="Pixel_weight_map.png">
 </p>
 
-4.	Finally, sum the weighted pixel values. This value functional connectivity, or the amount of accessible habitat for the focal species.
+4.	Finally, sum the weighted pixel values. This value represents functional connectivity - essentially, the amount of accessible habitat for the focal species.
 
 **Results**
 
@@ -38,10 +38,14 @@ This functional connectivity measure is a strong predictor of the number of humm
 
 **Code notes**
 
-Code is written in JavaScript and meant to be run using Google Earth Engine API (code.earthengine.google.com)
+These scripts are written in JavaScript and meant to be run using Google Earth Engine API (code.earthengine.google.com)
 
 - 01_Processing_digitized_layers - removes patches smaller than a certain threshold.
 - 02_Calculating_connectivity - calculates functional connectivity based on hummingbird gap-crossing ability and mean home range length
+
+This script is written in R
+
+- 03_Visualizing_pixel_weights.Rmd
 
 **Data notes**
 
