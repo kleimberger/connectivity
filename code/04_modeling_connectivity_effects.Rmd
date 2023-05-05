@@ -1,0 +1,168 @@
+---
+title: "Connectivity effects on plant-hummingbird interactions"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(glmmTMB)
+library(DHARMa)
+library(ggplot2)
+library(GGally)
+```
+
+**Goal**
+
+Statistically model effects of connectivity on plant-hummingbird interactions, specifically:
+
+  * hummingbird abundance (based on hummingbirds captured in mist nets)
+  * hummingbird visitation rates to *Heliconia tortuosa* (interactions observed with trail cameras)
+  * pollination success of *Heliconia tortuosa* (pollen tubes)
+  * network-level specialization (interactions observed with trail cameras)
+  
+**Approach**
+
+- Generalized linear mixed models
+
+- Include other factors thought to influence hummingbird occurrence/behavior as covariates, specifically:
+
+  * density of *Heliconia tortuosa* (Ln calories/ha)
+  * density of floral resources other than *Heliconia tortuosa* (Ln calories/ha)
+
+- Include additional covariates depending on the response variable
+
+  * hummingbird abundance: capture effort (net-hours)
+  * hummingbird visitation rates to *Heliconia tortuosa*: number of flowers present
+
+# Step 1: Get data
+
+Connectivity metric, calculated in previous scripts
+```{r}
+#Connectivity for each site (aka "weighted patch area")
+connectivity <- read.csv("data/export/for_analysis/patchMetrics_20200701.csv") %>%
+  select(patch, connectivity = weighted_patch_area)
+```
+
+The following data have been used in other publications and are publicly available on Dryad. Because these datasets were collected as part of an experiment, we will only look at data before the experimental manipulation occurred (i.e., only during the 'pre' period).
+
+Other predictor variables: https://doi.org/10.5061/dryad.jwstqjqbh
+```{r}
+#Density of Heliconia
+heto_density <- read.csv("../hummingbird-persistence/data/export/for_analysis/Site_and_replicate_characteristics.csv") %>%
+  select(year, patch, focal_area_size, heto_calories_per_ha)
+
+#Density of non-Heliconia
+nonheto_density <- read.csv("../hummingbird-persistence/data/export/for_analysis/Percentage_calories_removed.csv") %>%
+  filter(estimate_name == "high_estimate") %>% #resource availability tailored to hummingbird groups based on relative visitation rates to each plant species
+  select(bird_group, year, patch, nonheto_calories_per_ha) %>%
+  arrange(bird_group)
+```
+
+Hummingbird abundance, visitation rates, and plant pollination success: https://doi.org/10.5061/dryad.jwstqjqbh
+```{r}
+#Hummingbird abundance (only sites with at least 1 hummingbird capture during 'pre' period are included in this dataset!)
+captures <- read.csv("../hummingbird-persistence/data/export/for_analysis/Capture_rates.csv") %>%
+  filter(exp_phase == "capture_1") %>% #'pre' period
+  select(bird_group, year, patch, net_hours, num_birds) %>%
+  left_join(connectivity) %>%
+  left_join(heto_density) %>%
+  left_join(nonheto_density)
+
+#Hummingbird visitation rates to Heliconia
+heto_visits <- read.csv("../hummingbird-persistence/data/export/for_analysis/Camera_visitation_rates.csv") %>%
+  filter(exp_phase == "pre") %>%
+  filter(plant_species == "HETO") %>%
+  select(bird_group, year, patch, plant_species, hours, flowers, sightings) %>%
+  left_join(connectivity) %>%
+  left_join(heto_density) %>%
+  left_join(nonheto_density)
+
+#Pollination success of Heliconia
+heto_pollination <- read.csv("../hummingbird-persistence/data/export/for_analysis/Pollen_tube_pollination_success.csv") %>%
+  filter(exp_phase == "pre") %>%
+  filter(plant_species == "HETO") %>%
+  select(year, patch, starts_with("styles")) %>%
+  left_join(connectivity) %>%
+  left_join(heto_density) %>%
+  left_join(nonheto_density)
+```
+
+Network metrics: https://doi.org/10.5061/dryad.70rxwdc34
+```{r}
+#Network-level specialization
+network_specialization <- read.csv("../hummingbird-rewiring/data/export/for_analysis/Network_specialization_for_analysis.csv") %>%
+  filter(exp_phase == "pre") %>%
+  filter(sampling_method == "visitation") %>%
+  select(bird_group, year, patch, metric, value) %>%
+  left_join(connectivity) %>%
+  left_join(heto_density) %>%
+  left_join(nonheto_density)
+```
+
+## Step 2: Check for multicollinearity between covariates
+
+```{r}
+data_predictors <- nonheto_density %>%
+  filter(bird_group == "all_spp") %>%
+  left_join(heto_density) %>%
+  left_join(connectivity) %>%
+  mutate(log_focal_area_size = log(focal_area_size),
+         log_heto_calories_per_ha = log(heto_calories_per_ha),
+         log_nonheto_calories_per_ha = log(nonheto_calories_per_ha))
+
+#Pairs plot, unlogged variables
+labels <- c("Heliconia density", "Non-Heliconia density", "Connectivity", "Sample area")
+pairs_plot <- data_predictors %>%
+  select(heto_calories_per_ha, nonheto_calories_per_ha, connectivity, focal_area_size) %>%
+  GGally::ggpairs(., upper=list(continuous=wrap("cor", size = 6)), columnLabels = labels) +
+   theme_bw(base_size = 14) +
+   theme(strip.text = element_text(size = 12), strip.background = element_rect(fill="white"), axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+pairs_plot
+
+#Pairs plot, logged variables
+log_labels <- c("Heliconia density", "Non-Heliconia density", "Connectivity")
+log_pairs_plot <- data_predictors %>%
+  select(log_heto_calories_per_ha, log_nonheto_calories_per_ha, connectivity) %>%
+  ggpairs(., upper=list(continuous=wrap("cor", size = 6)), columnLabels = log_labels) +
+   theme_bw(base_size = 14) +
+   theme(strip.text = element_text(size = 12), strip.background = element_rect(fill="white"), axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+log_pairs_plot
+
+#Resource & connectivity only, with logged variables---------#
+resource_connect_labels <- c("Ln Heliconia\n density", "Ln Non-Heliconia\ndensity", "Connectivity")
+resource_connect_plot <- data_predictors %>%
+  select(log_heto_calories_per_ha, log_nonheto_calories_per_ha, connectivity) %>%
+  GGally::ggpairs(.,
+                  upper = list(continuous = wrap("cor", size = 8)),
+                  lower = list(continuous = wrap("smooth")), #default seems to be lm: https://www.rdocumentation.org/packages/GGally/versions/1.5.0/topics/ggally_smooth
+                  columnLabels = resource_connect_labels) +
+   theme_bw(base_size = 20) +
+   theme(strip.text = element_text(size = 14), strip.background = element_rect(fill="white"), axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+resource_connect_plot
+
+#Export plot
+ggsave("results/Resource_density_connectivity_corr_plot.png", plot = resource_connect_plot, width = 8, height = 8, units = "in", dpi = 300)
+```
+
+Pearson correlations (same values as in correlation plot)
+```{r}
+#These are the highest correlations
+cor.test(data_predictors$connectivity, data_predictors$log_nonheto_calories_per_ha)
+cor.test(data_predictors$heto_calories_per_ha, data_predictors$log_nonheto_calories_per_ha)
+```
+
+## Step 3: Create models
+
+
+## Step 4: 
+
+
+
+
