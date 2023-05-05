@@ -8,7 +8,7 @@ output: html_document
 Make a figure of pixel weights within focal landscape (1000m of focal area centroid)
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
 
 library(tidyr)
 library(purrr)
@@ -52,7 +52,7 @@ zoom_out <- function(layer, adjust){
 ```
 
 Plot pixel weights
-```{r}
+```{r, fig.width=8, fig.height=8}
 #tmaptools::palette_explorer() for the named palettes.
 pixel_weight_map <- 
   
@@ -67,5 +67,5 @@ pixel_weight_map
 
 tmap_save(pixel_weight_map, filename = "Pixel_weight_map.png",
           dpi = 300,
-          height = 8, width = 8, units = "in")
+          width = 8, height = 8, units = "in")
 ```

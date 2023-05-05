@@ -13,6 +13,7 @@ library(glmmTMB)
 library(DHARMa)
 library(ggplot2)
 library(GGally)
+library(ggpubr)
 ```
 
 **Goal**
@@ -22,11 +23,16 @@ Statistically model effects of connectivity on plant-hummingbird interactions, s
   * hummingbird abundance (based on hummingbirds captured in mist nets)
   * hummingbird visitation rates to *Heliconia tortuosa* (interactions observed with trail cameras)
   * pollination success of *Heliconia tortuosa* (pollen tubes)
-  * network-level specialization (interactions observed with trail cameras)
+  * network specialization (interactions observed with trail cameras)
   
 **Approach**
 
-- Generalized linear mixed models
+- Generalized linear mixed models, using the following distributions:
+
+  * hummingbird abundance (Poisson)
+  * hummingbird visitation rates to *Heliconia tortuosa* (zero-inflated Poisson)
+  * pollination success of *Heliconia tortuosa* (binomial)
+  * network specialization (beta)
 
 - Include other factors thought to influence hummingbird occurrence/behavior as covariates, specifically:
 
@@ -36,9 +42,17 @@ Statistically model effects of connectivity on plant-hummingbird interactions, s
 - Include additional covariates depending on the response variable
 
   * hummingbird abundance: capture effort (net-hours)
-  * hummingbird visitation rates to *Heliconia tortuosa*: number of flowers present
+  * hummingbird visitation rates to *Heliconia tortuosa*: number of flowers present at camera
 
-# Step 1: Get data
+- For hummingbird abundance and hummingbird visitation rates, analyze for all hummingbird species and for *Heliconia* specialists (Green hermits and Violet sabrewings)
+
+# Step 1: Get functions and data
+
+Functions
+```{r}
+source("code/functions/Modeling_helper_functions.R")
+source("code/functions/Transform_proportion_for_betareg.R")
+```
 
 Connectivity metric, calculated in previous scripts
 ```{r}
@@ -53,7 +67,7 @@ Other predictor variables: https://doi.org/10.5061/dryad.jwstqjqbh
 ```{r}
 #Density of Heliconia
 heto_density <- read.csv("../hummingbird-persistence/data/export/for_analysis/Site_and_replicate_characteristics.csv") %>%
-  select(year, patch, focal_area_size, heto_calories_per_ha)
+  select(year, patch, heto_calories_per_ha)
 
 #Density of non-Heliconia
 nonheto_density <- read.csv("../hummingbird-persistence/data/export/for_analysis/Percentage_calories_removed.csv") %>%
@@ -64,13 +78,15 @@ nonheto_density <- read.csv("../hummingbird-persistence/data/export/for_analysis
 
 Hummingbird abundance, visitation rates, and plant pollination success: https://doi.org/10.5061/dryad.jwstqjqbh
 ```{r}
-#Hummingbird abundance (only sites with at least 1 hummingbird capture during 'pre' period are included in this dataset!)
+#Hummingbird abundance
 captures <- read.csv("../hummingbird-persistence/data/export/for_analysis/Capture_rates.csv") %>%
   filter(exp_phase == "capture_1") %>% #'pre' period
   select(bird_group, year, patch, net_hours, num_birds) %>%
   left_join(connectivity) %>%
   left_join(heto_density) %>%
-  left_join(nonheto_density)
+  left_join(nonheto_density) %>%
+  mutate(log_heto_calories_per_ha = log(heto_calories_per_ha),
+         log_nonheto_calories_per_ha = log(nonheto_calories_per_ha))
 
 #Hummingbird visitation rates to Heliconia
 heto_visits <- read.csv("../hummingbird-persistence/data/export/for_analysis/Camera_visitation_rates.csv") %>%
@@ -79,28 +95,39 @@ heto_visits <- read.csv("../hummingbird-persistence/data/export/for_analysis/Cam
   select(bird_group, year, patch, plant_species, hours, flowers, sightings) %>%
   left_join(connectivity) %>%
   left_join(heto_density) %>%
-  left_join(nonheto_density)
+  left_join(nonheto_density) %>%
+  mutate(log_heto_calories_per_ha = log(heto_calories_per_ha),
+         log_nonheto_calories_per_ha = log(nonheto_calories_per_ha))
 
 #Pollination success of Heliconia
 heto_pollination <- read.csv("../hummingbird-persistence/data/export/for_analysis/Pollen_tube_pollination_success.csv") %>%
   filter(exp_phase == "pre") %>%
   filter(plant_species == "HETO") %>%
-  select(year, patch, starts_with("styles")) %>%
+  select(year, patch, starts_with("styles"), prop_with_tubes) %>%
+  mutate(bird_group = "greh_visa") %>% #Add resource availability tailored to Green hermits/Violet sabrewings (primary pollinators)
   left_join(connectivity) %>%
   left_join(heto_density) %>%
-  left_join(nonheto_density)
+  left_join(nonheto_density) %>%
+  mutate(log_heto_calories_per_ha = log(heto_calories_per_ha),
+         log_nonheto_calories_per_ha = log(nonheto_calories_per_ha))
 ```
 
 Network metrics: https://doi.org/10.5061/dryad.70rxwdc34
 ```{r}
-#Network-level specialization
+#Network specialization
 network_specialization <- read.csv("../hummingbird-rewiring/data/export/for_analysis/Network_specialization_for_analysis.csv") %>%
   filter(exp_phase == "pre") %>%
   filter(sampling_method == "visitation") %>%
+  filter(metric == "H2") %>%
   select(bird_group, year, patch, metric, value) %>%
   left_join(connectivity) %>%
   left_join(heto_density) %>%
-  left_join(nonheto_density)
+  left_join(nonheto_density) %>%
+  mutate(log_heto_calories_per_ha = log(heto_calories_per_ha),
+         log_nonheto_calories_per_ha = log(nonheto_calories_per_ha))
+
+#I thought I might need to transform proportion to avoid values of exactly zero or exactly one, but those values are not present in this dataset
+#mutate(value_transform = transform_proportion(value)) 
 ```
 
 ## Step 2: Check for multicollinearity between covariates
@@ -110,14 +137,13 @@ data_predictors <- nonheto_density %>%
   filter(bird_group == "all_spp") %>%
   left_join(heto_density) %>%
   left_join(connectivity) %>%
-  mutate(log_focal_area_size = log(focal_area_size),
-         log_heto_calories_per_ha = log(heto_calories_per_ha),
+  mutate(log_heto_calories_per_ha = log(heto_calories_per_ha),
          log_nonheto_calories_per_ha = log(nonheto_calories_per_ha))
 
 #Pairs plot, unlogged variables
-labels <- c("Heliconia density", "Non-Heliconia density", "Connectivity", "Sample area")
+labels <- c("Heliconia density", "Non-Heliconia density", "Connectivity")
 pairs_plot <- data_predictors %>%
-  select(heto_calories_per_ha, nonheto_calories_per_ha, connectivity, focal_area_size) %>%
+  select(heto_calories_per_ha, nonheto_calories_per_ha, connectivity) %>%
   GGally::ggpairs(., upper=list(continuous=wrap("cor", size = 6)), columnLabels = labels) +
    theme_bw(base_size = 14) +
    theme(strip.text = element_text(size = 12), strip.background = element_rect(fill="white"), axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
@@ -134,7 +160,7 @@ log_pairs_plot <- data_predictors %>%
 
 log_pairs_plot
 
-#Resource & connectivity only, with logged variables---------#
+#Resource & connectivity only, with logged variables
 resource_connect_labels <- c("Ln Heliconia\n density", "Ln Non-Heliconia\ndensity", "Connectivity")
 resource_connect_plot <- data_predictors %>%
   select(log_heto_calories_per_ha, log_nonheto_calories_per_ha, connectivity) %>%
@@ -148,7 +174,7 @@ resource_connect_plot <- data_predictors %>%
 resource_connect_plot
 
 #Export plot
-ggsave("results/Resource_density_connectivity_corr_plot.png", plot = resource_connect_plot, width = 8, height = 8, units = "in", dpi = 300)
+ggsave("results/figures/FigS1.png", plot = resource_connect_plot, width = 8, height = 8, units = "in", dpi = 300)
 ```
 
 Pearson correlations (same values as in correlation plot)
@@ -158,11 +184,361 @@ cor.test(data_predictors$connectivity, data_predictors$log_nonheto_calories_per_
 cor.test(data_predictors$heto_calories_per_ha, data_predictors$log_nonheto_calories_per_ha)
 ```
 
-## Step 3: Create models
+## Step 3: Fit models
 
+Hummingbird abundance (all hummingbird species)
+```{r, fig.show = 'hide', results = 'hide', echo = FALSE}
+captures_all_spp <- captures %>%
+  filter(bird_group == "all_spp")
 
-## Step 4: 
+m1 <- glmmTMB::glmmTMB(num_birds ~  scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_all_spp, na.action = na.omit, family = "poisson", ziformula = ~0)
 
+m2 <- glmmTMB::glmmTMB(num_birds ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_all_spp, na.action = na.omit, family = "poisson", ziformula = ~1)
 
+m3 <- glmmTMB::glmmTMB(num_birds ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_all_spp, na.action = na.omit, family = "nbinom1", ziformula = ~0)
 
+m4 <- glmmTMB::glmmTMB(num_birds ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_all_spp, na.action = na.omit, family = "nbinom1", ziformula = ~1, control = glmmTMBControl(optimizer=optim, optArgs=list(method="BFGS")))
+
+m5 <- glmmTMB::glmmTMB(num_birds ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_all_spp, na.action = na.omit, family = "nbinom2", ziformula = ~0)
+
+m6 <- glmmTMB::glmmTMB(num_birds ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_all_spp, na.action = na.omit, family = "nbinom2", ziformula = ~1, control = glmmTMBControl(optimizer=optim, optArgs=list(method="BFGS")))
+
+#Combine models
+model_fitting_captures_all_spp <-  tibble(model_name = c("m1", "m2", "m3", "m4", "m5", "m6"), model = list(m1, m2, m3, m4, m5, m6)) %>%
+  mutate(dharma_object = map(model, ~simulateResiduals(fittedModel = ., n = 1000, plot = FALSE, re.form = ~0))) %>%
+  mutate(dharma_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "basic")),
+         dharma_zeroinfl_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "zeroinflation")),
+         dharma_overdisp_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "overdispersion"))) %>%
+  mutate(AICc = map(model, MuMIn::AICc))
+
+#Which model is best according to AIC?
+model_fitting_captures_all_spp %>%
+  select(model_name, AICc) %>%
+  unnest(AICc) %>%
+  arrange(AICc)
+
+#Model 1 (Poisson)
+
+#Check assumptions
+model_fitting_captures_all_spp$dharma_plot[[1]]
+model_fitting_captures_all_spp$dharma_zeroinfl_plot[[1]]
+model_fitting_captures_all_spp$dharma_overdisp_plot[[1]]
+
+#Hmm, Model 1 doesn't look great. Model 2 (ZIP), Model 3 (nbinom1), and  Model 5 (nbinom2) are next best models
+model_fitting_captures_all_spp$dharma_plot[[2]]
+model_fitting_captures_all_spp$dharma_zeroinfl_plot[[2]]
+model_fitting_captures_all_spp$dharma_overdisp_plot[[2]]
+
+model_fitting_captures_all_spp$dharma_plot[[3]]
+model_fitting_captures_all_spp$dharma_zeroinfl_plot[[3]]
+model_fitting_captures_all_spp$dharma_overdisp_plot[[3]]
+
+model_fitting_captures_all_spp$dharma_plot[[5]]
+model_fitting_captures_all_spp$dharma_zeroinfl_plot[[5]]
+model_fitting_captures_all_spp$dharma_overdisp_plot[[5]]
+
+#Model 2 (ZIP) looks best in terms of assumptions
+model_captures_all_spp <- m2
+```
+
+Hummingbird abundance (*Heliconia* specialists)
+```{r, fig.show = 'hide', results = 'hide', echo = FALSE}
+captures_greh_visa <- captures %>%
+  filter(bird_group == "greh_visa")
+
+m1 <- glmmTMB::glmmTMB(num_birds ~  scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_greh_visa, na.action = na.omit, family = "poisson", ziformula = ~0)
+
+m2 <- glmmTMB::glmmTMB(num_birds ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_greh_visa, na.action = na.omit, family = "poisson", ziformula = ~1)
+
+m3 <- glmmTMB::glmmTMB(num_birds ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_greh_visa, na.action = na.omit, family = "nbinom1", ziformula = ~0)
+
+m4 <- glmmTMB::glmmTMB(num_birds ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_greh_visa, na.action = na.omit, family = "nbinom1", ziformula = ~1, control = glmmTMBControl(optimizer=optim, optArgs=list(method="BFGS")))
+
+m5 <- glmmTMB::glmmTMB(num_birds ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_greh_visa, na.action = na.omit, family = "nbinom2", ziformula = ~0)
+
+m6 <- glmmTMB::glmmTMB(num_birds ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(net_hours) + (1|patch), data = captures_greh_visa, na.action = na.omit, family = "nbinom2", ziformula = ~1, control = glmmTMBControl(optimizer=optim, optArgs=list(method="BFGS")))
+
+#Combine models
+model_fitting_captures_greh_visa <-  tibble(model_name = c("m1", "m2", "m3", "m4", "m5", "m6"), model = list(m1, m2, m3, m4, m5, m6)) %>%
+  mutate(dharma_object = map(model, ~simulateResiduals(fittedModel = ., n = 1000, plot = FALSE, re.form = ~0))) %>%
+  mutate(dharma_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "basic")),
+         dharma_zeroinfl_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "zeroinflation")),
+         dharma_overdisp_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "overdispersion"))) %>%
+  mutate(AICc = map(model, MuMIn::AICc))
+
+#Which model is best according to AIC?
+model_fitting_captures_greh_visa %>%
+  select(model_name, AICc) %>%
+  unnest(AICc) %>%
+  arrange(AICc)
+
+#Model 1 (Poisson)
+
+#Check assumptions
+model_fitting_captures_greh_visa$dharma_plot[[1]]
+model_fitting_captures_greh_visa$dharma_zeroinfl_plot[[1]]
+model_fitting_captures_greh_visa$dharma_overdisp_plot[[1]]
+
+model_captures_greh_visa <- m1
+```
+
+Hummingbird visitation rates to *Heliconia* (all hummingbird species)
+```{r, fig.show = 'hide', results = 'hide', echo = FALSE}
+heto_visits_all_spp <- heto_visits %>%
+  filter(bird_group == "all_spp")
+
+m1 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_all_spp, na.action = na.omit, family = "poisson", ziformula = ~0)
+
+m2 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_all_spp, na.action = na.omit, family = "poisson", ziformula = ~1)
+
+m3 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_all_spp, na.action = na.omit, family = "nbinom1", ziformula = ~0, control = glmmTMBControl(optimizer=optim, optArgs=list(method="BFGS")))
+
+m4 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_all_spp, na.action = na.omit, family = "nbinom1", ziformula = ~1)
+
+m5 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_all_spp, na.action = na.omit,family = "nbinom2", ziformula = ~0, control = glmmTMBControl(optimizer=optim, optArgs=list(method="BFGS")))
+
+m6 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_all_spp, na.action = na.omit, family = "nbinom2", ziformula = ~1)
+
+#Combine models
+model_fitting_heto_visits_all_spp <-  tibble(model_name = c("m1", "m2", "m3", "m4", "m5", "m6"), model = list(m1, m2, m3, m4, m5, m6)) %>%
+  mutate(dharma_object = map(model, ~simulateResiduals(fittedModel = ., n = 1000, plot = FALSE, re.form = ~0))) %>%
+  mutate(dharma_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "basic")),
+         dharma_zeroinfl_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "zeroinflation")),
+         dharma_overdisp_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "overdispersion"))) %>%
+  mutate(AICc = map(model, MuMIn::AICc))
+
+#Which model is best according to AIC?
+model_fitting_heto_visits_all_spp %>%
+  select(model_name, AICc) %>%
+  unnest(AICc) %>%
+  arrange(AICc)
+
+#Model 2 (zero-inflated Poisson)
+
+#Check assumptions
+model_fitting_captures_all_spp$dharma_plot[[2]]
+model_fitting_captures_all_spp$dharma_zeroinfl_plot[[2]]
+model_fitting_captures_all_spp$dharma_overdisp_plot[[2]]
+
+model_heto_visits_all_spp <- m2
+```
+
+Hummingbird visitation rates to *Heliconia* (*Heliconia* specialists)
+```{r, fig.show = 'hide', results = 'hide', echo = FALSE}
+heto_visits_greh_visa <- heto_visits %>%
+  filter(bird_group == "greh_visa")
+
+m1 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_greh_visa, na.action = na.omit, family = "poisson", ziformula = ~0)
+
+m2 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_greh_visa, na.action = na.omit, family = "poisson", ziformula = ~1)
+
+m3 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_greh_visa, na.action = na.omit, family = "nbinom1", ziformula = ~0, control = glmmTMBControl(optimizer=optim, optArgs=list(method="BFGS")))
+
+m4 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_greh_visa, na.action = na.omit, family = "nbinom1", ziformula = ~1)
+
+m5 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_greh_visa, na.action = na.omit,family = "nbinom2", ziformula = ~0, control = glmmTMBControl(optimizer=optim, optArgs=list(method="BFGS")))
+
+m6 <- glmmTMB::glmmTMB(sightings ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + scale(flowers) + offset(log(hours)) + (1|patch), data = heto_visits_greh_visa, na.action = na.omit, family = "nbinom2", ziformula = ~1)
+
+#Combine models
+model_fitting_heto_visits_greh_visa <-  tibble(model_name = c("m1", "m2", "m3", "m4", "m5", "m6"), model = list(m1, m2, m3, m4, m5, m6)) %>%
+  mutate(dharma_object = map(model, ~simulateResiduals(fittedModel = ., n = 1000, plot = FALSE, re.form = ~0))) %>%
+  mutate(dharma_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "basic")),
+         dharma_zeroinfl_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "zeroinflation")),
+         dharma_overdisp_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "overdispersion"))) %>%
+  mutate(AICc = map(model, MuMIn::AICc))
+
+#Which model is best according to AIC?
+model_fitting_heto_visits_greh_visa %>%
+  select(model_name, AICc) %>%
+  unnest(AICc) %>%
+  arrange(AICc)
+
+#Model 2 (zero-inflated Poisson)
+
+#Check assumptions
+model_fitting_heto_visits_greh_visa$dharma_plot[[2]]
+model_fitting_heto_visits_greh_visa$dharma_zeroinfl_plot[[2]]
+model_fitting_heto_visits_greh_visa$dharma_overdisp_plot[[2]]
+
+model_heto_visits_greh_visa <- m2
+```
+
+Pollination success of *Heliconia* (proportion of styles with at least one pollen tube)
+```{r, fig.show = 'hide', results = 'hide', echo = FALSE}
+m1 <- glmmTMB::glmmTMB(prop_with_tubes ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + (1|patch), data = heto_pollination, na.action = na.omit, family = "binomial", weights = styles, ziformula = ~0)
+
+m2 <- glmmTMB::glmmTMB(prop_with_tubes ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + (1|patch), data = heto_pollination, na.action = na.omit, family = "binomial", weights = styles, ziformula = ~1)
+
+m3 <- glmmTMB::glmmTMB(prop_with_tubes ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + (1|patch), data = heto_pollination, na.action = na.omit, family = "betabinomial", weights = styles, ziformula = ~0, control = glmmTMBControl(optimizer=optim, optArgs=list(method="BFGS")))
+
+m4 <- glmmTMB::glmmTMB(prop_with_tubes ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + (1|patch), data = heto_pollination, na.action = na.omit, family = "betabinomial", weights = styles, ziformula = ~1, control = glmmTMBControl(optimizer=optim, optArgs=list(method="BFGS")))
+
+#Combine models
+model_fitting_heto_pollination <- tibble(model_name = c("m1", "m2", "m3", "m4"), model = list(m1, m2, m3, m4)) %>%
+  mutate(dharma_object = map(model, ~simulateResiduals(fittedModel = ., n = 1000, plot = FALSE, re.form = ~0))) %>%
+  mutate(dharma_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "basic")),
+         dharma_zeroinfl_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "zeroinflation")),
+         dharma_overdisp_plot = pmap(list(dharma_object, model_name), ~make_dharma_plot(dharma_object = ..1, plot_title = ..2,  plot_type = "overdispersion"))) %>%
+  mutate(AICc = map(model, MuMIn::AICc))
+
+#Which model is best according to AIC?
+model_fitting_heto_pollination %>%
+  select(model_name, AICc) %>%
+  unnest(AICc) %>%
+  arrange(AICc)
+
+#Model 1 (binomial)
+
+#Check assumptions
+model_fitting_heto_pollination$dharma_plot[[1]]
+model_fitting_heto_pollination$dharma_zeroinfl_plot[[1]]
+model_fitting_heto_pollination$dharma_overdisp_plot[[1]]
+
+model_heto_pollination <- m1
+```
+
+Network specialization
+```{r, fig.show = 'hide', results = 'hide', echo = FALSE}
+model_network_specialization <- glmmTMB::glmmTMB(value ~ scale(connectivity) + scale(log_heto_calories_per_ha) + scale(log_nonheto_calories_per_ha) + (1|patch), data = network_specialization, na.action = na.omit, family = "beta_family")
+
+#Check assumptions
+simulateResiduals(model_network_specialization) %>% plot()
+simulateResiduals(model_network_specialization) %>% testDispersion()
+```
+
+## Step 4: Extract and visualize results
+
+Model summaries
+```{r}
+summary(model_captures_all_spp)
+summary(model_captures_greh_visa) #Strong effect of connectivity on abundance of Heliconia specialists
+summary(model_heto_visits_all_spp)
+summary(model_heto_visits_greh_visa)
+summary(model_heto_pollination)
+summary(model_network_specialization) #Strong effect of connectivity on network specialization
+
+#Combine for export
+models <- tibble(model_number = c(1:6),
+                  analysis = c("captures", "captures", "heto_visits", "heto_visits", "heto_pollination", "network_specialization"),
+                  bird_group = c("all_spp", "greh_visa", "all_spp", "greh_visa", NA, NA),
+                  model = list(model_captures_all_spp, model_captures_greh_visa, model_heto_visits_all_spp, model_heto_visits_greh_visa, model_heto_pollination, model_network_specialization))
+  
+results <- models %>%
+  mutate(summary = map(model, summary),
+         summary_tidy = map(model, broom.mixed::tidy),
+         confint_wald = map(model, ~calculate_ci(., method_name = "wald")))
+
+#Extract model summaries
+results_tidy <- results %>%
+  select(model_number, analysis, bird_group, summary_tidy) %>%
+  unnest(c(summary_tidy))
+
+#Extract confidence intervals
+results_confint <- results %>%
+  select(model_number, analysis, bird_group, confint_wald) %>%
+  mutate(confint_df = map(confint_wald, as.data.frame)) %>% #CI as dataframe
+  mutate(confint_df = map(confint_df, ~tibble::rownames_to_column(., var = "term"))) %>%
+  unnest(cols = confint_df) %>%
+  rename(lowerCI = "2.5 %", upperCI = "97.5 %") %>%
+  select(-confint_wald, -Estimate)
+
+#Back-transform coefficients and confidence intervals to data scale from model scale
+results_tidy_confint <- results_tidy %>%
+  left_join(results_confint) %>%
+  mutate_at(vars(estimate, std.error, statistic, lowerCI, upperCI), ~round(., digits = 2)) %>%
+  mutate(pvalue_round = format.pval(pv = round(p.value, 3), digits = 3, nsmall = 3, eps = 0.001)) %>%
+  select(model_number:term, estimate, lowerCI, upperCI, statistic, pvalue_round, pvalue = p.value, std_error = std.error, everything())
+```
+
+Figures
+```{r}
+#Calculate predictions using ggeffects + add in data points (minus outlier)
+predicted_values <- results %>%
+  mutate(ggeffects = map(model, ~ggeffects::ggpredict(., terms = "connectivity [all]", back.transform = TRUE)))
+
+#predicted_values$ggeffects[[1]]
+
+#Function to make plot
+make_correlation_plot <- function(ggeffects, analysis, significant){
+  
+  if(significant == TRUE){linetype = "solid"}
+  if(significant == FALSE){linetype = "dashed"}
+  if(analysis == "captures"){ylabel = "Number of birds captured"}
+  if(analysis == "heto_visits"){ylabel = "Visits per hour"}
+  if(analysis == "heto_pollination"){ylabel = "Pollination success"}
+  if(analysis == "network_specialization"){ylabel = "Network-level specialization"}
+
+  plot <- ggplot(data = ggeffects, aes(x = x, y = predicted)) + 
+    geom_line(linewidth = 1, lty = linetype) +
+    geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.25) +
+    theme_bw(base_size = 20) +
+    theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank(), strip.background = element_rect(fill="white")) + 
+    scale_y_continuous(labels = scales::number_format(accuracy = 0.1, decimal.mark = '.')) +
+    xlim(30000, 275000) +
+    scale_x_continuous(breaks = waiver(), n.breaks = 6) +
+    labs(x = "Functional connectivity", y = ylabel)
+
+  return(plot)
+  
+}
+
+#Analyses with statistically significant connectivity effect
+significant_effects <- results_tidy_confint %>%
+  filter(grepl("connectivity", term)) %>%
+  filter(pvalue < 0.05)
+
+results_plots <- predicted_values %>%
+  mutate(significant = ifelse(model_number %in% significant_effects$model_number, TRUE, FALSE)) %>%
+  mutate(predicted_plot = pmap(list(ggeffects, analysis, significant), ~make_correlation_plot(ggeffects = ..1, analysis = ..2, significant = ..3)))
+
+# results_plots$predicted_plot
+```
+
+Combine figures
+
+Fig. 1
+```{r, fig.width=12, fig.height=12}
+captures_heto_visits_plots <- results_plots %>%
+  filter(analysis == "captures" | analysis == "heto_visits")
+
+captures_heto_visits_multiplot <- ggarrange(plotlist = captures_heto_visits_plots$predicted_plot, ncol = 2, nrow = 2, labels = "AUTO", font.label = list(size = 24, face = "plain"))
+
+captures_heto_visits_multiplot
+
+# ggview::ggview(captures_heto_visits_multiplot, width = 12, height = 12, unit = "in")
+```
+
+Fig. 2
+```{r, fig.width=6, fig.height=6}
+heto_pollination_plot <- results_plots %>%
+  filter(analysis == "heto_pollination") %>%
+  pull(predicted_plot)
+
+heto_pollination_plot <- heto_pollination_plot[[1]]
+heto_pollination_plot
+
+# ggview::ggview(heto_pollination_plot, width = 6, height = 6, unit = "in")
+```
+
+Fig. 3
+```{r, fig.width=6, fig.height=6}
+network_specialization_plot <- results_plots %>%
+  filter(analysis == "network_specialization") %>%
+  pull(predicted_plot)
+
+network_specialization_plot <- network_specialization_plot[[1]]
+network_specialization_plot
+
+# ggview::ggview(network_specialization_plot, width = 6, height = 6, unit = "in")
+```
+
+## Step 5: Export results
+
+```{r}
+write.csv(results_tidy_confint, "results/tables/Model_summaries.csv")
+ggsave("results/figures/Fig1.png", captures_heto_visits_multiplot, width = 12, height = 12, units = "in")
+ggsave("results/figures/Fig2.png", heto_pollination_plot, width = 6, height = 6, units = "in")
+ggsave("results/figures/Fig3.png", network_specialization_plot, width = 6, height = 6, units = "in")
+```
 
