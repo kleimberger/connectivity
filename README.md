@@ -34,7 +34,7 @@ Processing steps in Google Earth Engine
 
 I calculated functional connectivity for a tropical hummingbird species, the green hermit. Characteristics of their movement behavior (i.e., gap-crossing ability and daily movement distance) were known from previous work in the study system.
 
-I then assessed the extent to with this functional connectivity measure is associated with plant-hummingbird interactions in this study system. The most common plant species within the understory of the forest fragments is *Heliconia tortuosa* (hereafter *Heliconia*). *Heliconia* is pollinated by two hummingbird species: Green hermits and Violet sabrewings. 
+I then assessed the extent to which this functional connectivity measure is associated with plant-hummingbird interactions in this study system. The most common plant species within the understory of the forest fragments is *Heliconia tortuosa* (hereafter *Heliconia*). *Heliconia* is pollinated by two hummingbird species: Green hermits and Violet sabrewings. 
 
 Functional connectivity is strongly associated with the number of *Heliconia*-associated hummingbirds captured per study site (i.e., Green hermits and Violet sabrewings), *and* the specialization of the plant-hummingbird interaction network. We did not find evidence that connectivity influenced the visitation rates to individual *Heliconia* inflorescences or *Heliconia* pollination success.
 
