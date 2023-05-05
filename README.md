@@ -32,35 +32,52 @@ Processing steps in Google Earth Engine
 
 **Results**
 
-I calculated functional connectivity for a tropical hummingbird species, the green hermit. Characteristics of their movement behavior – gap-crossing ability and daily movement distance – were known from previous work in the study system.
+I calculated functional connectivity for a tropical hummingbird species, the green hermit. Characteristics of their movement behavior (i.e., gap-crossing ability and daily movement distance) were known from previous work in the study system.
 
-This functional connectivity measure is a strong predictor of the number of hummingbirds captured per study site.
+I then assessed the extent to with this functional connectivity measure is associated with plant-hummingbird interactions in this study system. The most common plant species within the understory of the forest fragments is *Heliconia tortuosa* (hereafter *Heliconia*). *Heliconia* is pollinated by two hummingbird species: Green hermits and Violet sabrewings. 
+
+Functional connectivity is strongly associated with the number of *Heliconia*-associated hummingbirds captured per study site (i.e., Green hermits and Violet sabrewings), *and* the specialization of the plant-hummingbird interaction network. We did not find evidence that connectivity influenced the visitation rates to individual *Heliconia* inflorescences or *Heliconia* pollination success.
+
+<p align="center">
+  <img width="800" height="800" src="results/figures/Fig1.png">
+</p>
+
+<p align="center">
+  <img width="400" height="400" src="results/figures/Fig2.png">
+</p>
+
+<p align="center">
+  <img width="400" height="400" src="results/figures/Fig3.png">
+</p>
 
 **Code notes**
 
-These scripts are written in JavaScript and meant to be run using Google Earth Engine API (code.earthengine.google.com)
+The following code is written in JavaScript and is meant to be run using Google Earth Engine API (code.earthengine.google.com)
 
-- 01_Processing_digitized_layers - removes patches smaller than a certain threshold.
-- 02_Calculating_connectivity - calculates functional connectivity based on hummingbird gap-crossing ability and mean home range length
+- 01_processing_digitized_layers 
+    * Removes patches smaller than a certain threshold. Produces these files:
+      + Digitized_forest_layer_small_removed_20200630.kml 
+      + Forest_raster_with_matrix_20200630.tif
+    
+- 02_calculating_connectivity
+    * Calculates functional connectivity based on hummingbird gap-crossing ability and mean home range length. Produces these files:
+      + Forest_raster_25m_buffer_with_matrix_20200630.tif
+      + Weighted_pixel_area_images_20200701 **Pixel weights based on cost distance and exponential decay function**
+      + patchMetrics_20200701.csv **Metrics of functional connectivity for analysis**
 
-This script is written in R
+The following code is written in R:
 
-- 03_Visualizing_pixel_weights.Rmd
+- 03_visualizing_pixel_weights.Rmd
+- 04_modeling_connectivity_effects.Rmd
 
 **Data notes**
 
-Imported files
+Files needed to run JavaScript code
+
 - Digitized_forest_layer - hand digitization of habitat vs. non-habitat (satellite imagery from 2018, digitization completed in 2020)
 - Costa_Rica_study_area - rectangle encompassing general study area
 - Patch_centroids_2016-2018 - focal area centroids
 - Patch_centroids_2016-2018_Buffer1000 - focal area centroids, buffered by 1000m radius
-
-Exported files
-- Digitized_forest_layer_small_removed_20200630.kml - exported from '01_Processing_digitized_layers'
-- Forest_raster_with_matrix_20200630.tif - exported from '01_Processing_digitized_layers'
-- Forest_raster_25m_buffer_with_matrix_20200630.tif - exported from '02_Calculating_connectivity'. Forest connected based on hummingbird gap-crossing ability (50m)
-- Weighted_pixel_area_images_20200701 - exported from '02_Calculating_connectivity'. Pixel weights based on cost distance and exponential decay function.
-- patchMetrics_20200701.csv - exported from '02_Calculating_connectivity'. **These are the metrics of functional connectivity for analysis.**
 
 **References**
 
